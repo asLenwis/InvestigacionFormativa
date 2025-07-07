@@ -3,11 +3,9 @@ from tkinter import ttk, messagebox
 import sympy as sp
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 import seaborn as sns
-#import os
+import warnings
 
 class CalculadoraIntegrales:
     def __init__(self, root):
@@ -131,9 +129,6 @@ class CalculadoraIntegrales:
     
     def calcular_integral(self):
         try:
-            # Limpiar la consola
-            #os.system('cls' if os.name == 'nt' else 'clear')
-            
             # Obtener la función principal
             funcion_str = self.funcion_var.get().strip()
             if not funcion_str:
@@ -208,8 +203,10 @@ class CalculadoraIntegrales:
                                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
             
             # Graficar función inicial
-            y_vals = f_func(x_vals, c_inicial)
-            ax.plot(x_vals, y_vals, color=colores[50], alpha=1)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                y_vals = f_func(x_vals, c_inicial)
+                ax.plot(x_vals, y_vals, color=colores[50], alpha=1)
             
             # Configurar ejes
             ax.set_xlabel(r"$x$", fontsize=12)
@@ -228,7 +225,9 @@ class CalculadoraIntegrales:
                 c_val = int(slider_c.val)
                 
                 if c_val not in valores_graficados:
-                    y_new = f_func(x_vals, c_val)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        y_new = f_func(x_vals, c_val)
                     idx = c_val + 50
                     ax.plot(x_vals, y_new, color=colores[idx % 101], alpha=0.85)
                     valores_graficados.add(c_val)
@@ -282,27 +281,59 @@ class CalculadoraIntegrales:
             # Convertir la función sympy a numpy
             f_np = sp.lambdify(x, f, 'numpy')
             
-            # Rango de valores x
-            x_min = min(float(limite_inf.evalf()), -10)
-            x_max = max(float(limite_sup.evalf()), 10)
-            x_vals = np.linspace(x_min - 1, x_max + 1, 500)
-            y_vals = f_np(x_vals)
-            
-            # Graficar la función
-            ax.plot(x_vals, y_vals, 'b-', linewidth=2, label=f'f(x) = {f_str}')
-            
-            # Rellenar el área bajo la curva
-            x_fill = np.linspace(float(limite_inf.evalf()), float(limite_sup.evalf()), 100)
-            y_fill = f_np(x_fill)
-            ax.fill_between(x_fill, y_fill, color='skyblue', alpha=0.4)
+            # Calcular dominio válido para la función
+            try:
+                # Intentar encontrar el dominio donde la función es real
+                dominio_min = float(limite_inf.evalf())
+                dominio_max = float(limite_sup.evalf())
+                
+                # Para funciones con raíces cuadradas, ajustar el dominio
+                if 'sqrt' in f_str:
+                    # Calcular puntos donde el argumento de la raíz es cero
+                    arg_raiz = list(f.atoms(sp.Pow))[0].base if list(f.atoms(sp.Pow)) else None
+                    if arg_raiz:
+                        puntos_criticos = sp.solve(arg_raiz, x)
+                        if puntos_criticos:
+                            dominio_min = max(dominio_min, min(float(pc.evalf()) for pc in puntos_criticos if float(pc.evalf()) > dominio_min))
+                            dominio_max = min(dominio_max, max(float(pc.evalf()) for pc in puntos_criticos if float(pc.evalf()) < dominio_max))
+                
+                # Rango de valores x
+                x_min = min(dominio_min, -10)
+                x_max = max(dominio_max, 10)
+                x_vals = np.linspace(x_min - 0.1, x_max + 0.1, 500)
+                
+                # Evaluar la función solo en el dominio válido
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    y_vals = f_np(x_vals)
+                
+                # Graficar la función
+                ax.plot(x_vals, y_vals, 'b-', linewidth=2, label=f'f(x) = {f_str}')
+                
+                # Rellenar el área bajo la curva solo en el intervalo de integración
+                x_fill = np.linspace(float(limite_inf.evalf()), float(limite_sup.evalf()), 100)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    y_fill = f_np(x_fill)
+                ax.fill_between(x_fill, y_fill, color='skyblue', alpha=0.4)
+                
+            except Exception as e:
+                # Si hay problemas con el dominio, usar solo el intervalo de integración
+                x_vals = np.linspace(float(limite_inf.evalf()) - 0.1, float(limite_sup.evalf()) + 0.1, 100)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    y_vals = f_np(x_vals)
+                ax.plot(x_vals, y_vals, 'b-', linewidth=2, label=f'f(x) = {f_str}')
+                ax.fill_between(x_vals, y_vals, color='skyblue', alpha=0.4)
             
             # Configurar título con LaTeX
             f_latex = sp.latex(f)
-            ax.set_title(fr"Integral definida de $f(x) = {f_latex}$", fontsize=14)
             
-            # Mostrar fórmula del resultado
+            # Simplificar la representación del resultado para evitar problemas con LaTeX
             resultado = sp.integrate(f, (x, limite_inf, limite_sup))
-            formula_text = rf"$\int_{{{sp.latex(limite_inf)}}}^{{{sp.latex(limite_sup)}}} {f_latex}\,dx = {sp.latex(resultado)} \approx {resultado.evalf(3)}$"
+            resultado_str = f"{resultado.evalf(3)}"  # Usar solo el valor numérico
+            
+            formula_text = rf"$\int_{{{sp.latex(limite_inf)}}}^{{{sp.latex(limite_sup)}}} {f_latex}\,dx \approx {resultado_str}$"
             
             ax.text(0.05, 0.95, formula_text,
                    transform=ax.transAxes, fontsize=13,
@@ -338,6 +369,7 @@ class CalculadoraIntegrales:
         # Obtener límites
         limite_inf_str = self.limite_inf_var.get().strip()
         limite_sup_str = self.limite_sup_var.get().strip()
+        
         
         if not limite_inf_str or not limite_sup_str:
             # Si no hay límites, encontrar intersecciones
@@ -379,7 +411,7 @@ class CalculadoraIntegrales:
         area = sp.integrate(abs(f - g), (x, limite_inf, limite_sup))
         self.resultado_var.set(
             f"Área entre f(x)={f_str} y g(x)={funcion2_str} "
-            f"desde x={limite_inf.evalf()} hasta x={limite_sup.evalf()} = {area.evalf()}"
+            f"desde LimInf={limite_inf} hasta LimSup={limite_sup} = {area.evalf(3)}"
         )
         
         # Mostrar gráfico
@@ -400,8 +432,12 @@ class CalculadoraIntegrales:
             x_min = min(float(limite_inf.evalf()), -10)
             x_max = max(float(limite_sup.evalf()), 10)
             x_vals = np.linspace(x_min - 1, x_max + 1, 500)
-            f_vals = f_np(x_vals)
-            g_vals = g_np(x_vals)
+            
+            # Evaluar funciones con manejo de advertencias
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                f_vals = f_np(x_vals)
+                g_vals = g_np(x_vals)
             
             # Graficar las funciones
             ax.plot(x_vals, f_vals, 'b-', linewidth=2, label=f'f(x) = {f_str}')
@@ -409,8 +445,10 @@ class CalculadoraIntegrales:
             
             # Rellenar el área entre las curvas
             x_fill = np.linspace(float(limite_inf.evalf()), float(limite_sup.evalf()), 100)
-            f_fill = f_np(x_fill)
-            g_fill = g_np(x_fill)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                f_fill = f_np(x_fill)
+                g_fill = g_np(x_fill)
             
             ax.fill_between(x_fill, f_fill, g_fill, where=(f_fill > g_fill), 
                            color='green', alpha=0.3, label='Área entre curvas')
@@ -422,9 +460,9 @@ class CalculadoraIntegrales:
             g_latex = sp.latex(g)
             ax.set_title(fr"Área entre $f(x) = {f_latex}$ y $g(x) = {g_latex}$", fontsize=14)
             
-            # Mostrar fórmula del resultado
+            # Mostrar fórmula del resultado (simplificada para evitar problemas con LaTeX)
             area = sp.integrate(abs(f - g), (x, limite_inf, limite_sup))
-            formula_text = rf"$\text{{Área}} = \int_{{{sp.latex(limite_inf)}}}^{{{sp.latex(limite_sup)}}} |{f_latex} - {g_latex}|\,dx \approx {area.evalf(3)}$"
+            formula_text = rf"$\text{{Área}} = \int_{{{limite_inf}}}^{{{limite_sup}}} |{f_latex} - {g_latex}|\,dx \approx {area.evalf(3)}$"
             
             ax.text(0.05, 0.95, formula_text,
                    transform=ax.transAxes, fontsize=13,
